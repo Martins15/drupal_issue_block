@@ -1,0 +1,86 @@
+<?php
+
+/**
+ * @file
+ * Main code for issue tracker module
+ */
+
+use Hussainweb\DrupalApi\Client;
+use Hussainweb\DrupalApi\Request\Collection\NodeCollectionRequest;
+use Hussainweb\DrupalApi\Request\Request;
+
+const ISSUE_STATUS_ACTIVE = 1;
+const ISSUE_CONTENT_TYPE = 'project_issue';
+
+/**
+ * Implements hook_cron().
+ */
+function issue_tracker_cron() {
+  $blocks = \Drupal\block\Entity\Block::loadMultiple();
+  foreach ($blocks as $block) {
+    if ($block->getPlugin() == 'issue_tracker_block') {
+      $settings = $block->get('settings');
+      if (isset($settings['project_name'])) {
+        issue_tracker_reload_project($settings['project_name'], $settings['max_items']);
+        // @TODO implement some kind of queue to avoid memory/execution time issues
+        //   when there are a lot of block instances.
+      }
+    }
+  }
+}
+
+/**
+ * Lookup a project node in the API.
+ */
+function issue_tracker_find_project($project_name) {
+  Request::$userAgent = 'Issue Tracker Module';
+  $client = new Client();
+
+  try {
+    $project_request = new NodeCollectionRequest(['field_project_machine_name' => $project_name]);
+    $project = $client->getEntity($project_request);
+    if ($project->count()) {
+      return $project->current()->getData();
+    }
+  }
+  catch (Exception $e) {
+    \Drupal::logger('issue_tracker')->error($e->getMessage());
+  }
+
+  return FALSE;
+}
+
+/**
+ * Reload issues for a particular project from the API.
+ */
+function issue_tracker_reload_project($project_name, $limit) {
+  $client = new Client();
+
+  if ($project = issue_tracker_find_project($project_name)) {
+    try {
+      $issues_request = new NodeCollectionRequest([
+        'type' => ISSUE_CONTENT_TYPE,
+        'field_project' => $project->nid,
+        'field_issue_status' => ISSUE_STATUS_ACTIVE,
+        //'sort' => 'comment_count',
+        'direction' => 'DESC',
+        'limit' => (int)$limit,
+      ]);
+      // @TODO figure out why 'sort' => 'comment_count' throws 503
+      $issues = $client->getEntity($issues_request);
+      $data = [];
+      while ($issues->key() < $issues->count()) {
+        $data[] = $issues->current()->getData();
+        $issues->next();
+      }
+      \Drupal::cache()->set('issue_tracker:' . $project_name, $data);
+
+      return $data;
+    }
+    catch (Exception $e) {
+      \Drupal::logger('issue_tracker')->error($e->getMessage());
+    }
+  }
+
+  return FALSE;
+}

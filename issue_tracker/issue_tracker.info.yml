@@ -1,0 +1,8 @@
+name: Issue Tracker
+type: module
+description: "Custom module for Factorial's coding challenge"
+package: Custom
+version: VERSION
+core_version_requirement: ^9
+dependencies:
+  - drupal:block
